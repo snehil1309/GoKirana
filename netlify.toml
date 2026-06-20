@@ -1,0 +1,17 @@
+[build]
+  command = "echo 'No build command needed for backend'"
+  publish = "public" # Dummy publish directory if Netlify requires one, or we can use root
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/api/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
