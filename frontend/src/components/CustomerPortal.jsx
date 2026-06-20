@@ -578,7 +578,7 @@ export default function CustomerPortal({ backendUrl }) {
       )}
 
       {selectedShop ? (
-        <>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
           {/* Shop Banner Header */}
           <div className="shop-banner" style={{
             position: 'relative',
@@ -604,79 +604,83 @@ export default function CustomerPortal({ backendUrl }) {
             </div>
           </div>
 
-          {/* Category Horizontal list */}
-          <div style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: 'transparent' }}>
-            <div className="categories-grid">
-              {categories.map((cat, idx) => (
-                <div
-                  key={idx}
-                  className={`category-card ${selectedCategory === cat.name ? 'active' : ''}`}
-                  onClick={() => setSelectedCategory(selectedCategory === cat.name ? null : cat.name)}
-                >
-                  <div className="category-image-wrapper">
-                    <img src={cat.icon} alt={cat.name} />
-                  </div>
-                  <span className="category-name">{cat.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Main Shop Catalog Feed */}
-          <main className="products-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 'bold' }}>
-                {selectedCategory ? `${selectedCategory}` : 'All Products'}
-              </h3>
-              <span style={{ fontSize: '11px', color: 'var(--primary-color)', backgroundColor: 'rgba(163, 230, 53, 0.1)', padding: '2px 8px', borderRadius: '20px' }}>
-                Free Delivery above ₹199
-              </span>
-            </div>
+          {/* New Split Layout: Left Categories Sidebar, Right Products Section */}
+          <div className="shop-layout-split" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
             
-            {filteredProducts.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
-                No products found matching filters.
+            {/* Left Category Sidebar */}
+            <aside className="category-sidebar">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {categories.map((cat, idx) => (
+                  <div
+                    key={idx}
+                    className={`category-sidebar-card ${selectedCategory === cat.name ? 'active' : ''}`}
+                    onClick={() => setSelectedCategory(selectedCategory === cat.name ? null : cat.name)}
+                  >
+                    <div className="category-image-wrapper">
+                      <img src={cat.icon} alt={cat.name} />
+                    </div>
+                    <span className="category-name">{cat.name}</span>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <div className="products-grid">
-                {filteredProducts.map(p => {
-                  const cartItem = cart[p.id];
-                  return (
-                    <div key={p.id} className="product-card">
-                      <div className="product-image-container" onClick={() => setSelectedProduct(p)}>
-                        <img src={p.image_url || 'https://via.placeholder.com/150'} alt={p.name} className="product-image" />
-                      </div>
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }} onClick={() => setSelectedProduct(p)}>
-                        <h4 className="product-name">{p.name}</h4>
-                        <span className="product-desc">{p.description}</span>
-                      </div>
-                      <div className="product-price-row">
-                        <div className="price-box">
-                          <span className="offered-price">₹{p.offered_price}</span>
-                          {p.mrp > p.offered_price && (
-                            <span className="mrp-price">₹{p.mrp}</span>
+            </aside>
+
+            {/* Right Products Feed */}
+            <main className="products-section" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 80px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 'bold' }}>
+                  {selectedCategory ? `${selectedCategory}` : 'All Products'}
+                </h3>
+                <span style={{ fontSize: '11px', color: 'var(--primary-color)', backgroundColor: 'rgba(163, 230, 53, 0.1)', padding: '2px 8px', borderRadius: '20px' }}>
+                  Free Delivery above ₹199
+                </span>
+              </div>
+              
+              {filteredProducts.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
+                  No products found matching filters.
+                </div>
+              ) : (
+                <div className="products-grid">
+                  {filteredProducts.map(p => {
+                    const cartItem = cart[p.id];
+                    return (
+                      <div key={p.id} className="product-card">
+                        <div className="product-image-container" onClick={() => setSelectedProduct(p)}>
+                          <img src={p.image_url || 'https://via.placeholder.com/150'} alt={p.name} className="product-image" />
+                        </div>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }} onClick={() => setSelectedProduct(p)}>
+                          <h4 className="product-name">{p.name}</h4>
+                          <span className="product-desc">{p.description}</span>
+                        </div>
+                        <div className="product-price-row">
+                          <div className="price-box">
+                            <span className="offered-price">₹{p.offered_price}</span>
+                            {p.mrp > p.offered_price && (
+                              <span className="mrp-price">₹{p.mrp}</span>
+                            )}
+                          </div>
+
+                          {p.stock === 0 ? (
+                            <span style={{ fontSize: '11px', color: 'var(--error-color)', fontWeight: 'bold' }}>Out of stock</span>
+                          ) : cartItem ? (
+                            <div className="qty-btn-container">
+                              <button className="qty-action-btn" onClick={() => removeFromCart(p.id)}>-</button>
+                              <span className="qty-val">{cartItem.quantity}</span>
+                              <button className="qty-action-btn" onClick={() => addToCart(p)}>+</button>
+                            </div>
+                          ) : (
+                            <button className="add-btn" onClick={() => addToCart(p)}>ADD</button>
                           )}
                         </div>
-
-                        {p.stock === 0 ? (
-                          <span style={{ fontSize: '11px', color: 'var(--error-color)', fontWeight: 'bold' }}>Out of stock</span>
-                        ) : cartItem ? (
-                          <div className="qty-btn-container">
-                            <button className="qty-action-btn" onClick={() => removeFromCart(p.id)}>-</button>
-                            <span className="qty-val">{cartItem.quantity}</span>
-                            <button className="qty-action-btn" onClick={() => addToCart(p)}>+</button>
-                          </div>
-                        ) : (
-                          <button className="add-btn" onClick={() => addToCart(p)}>ADD</button>
-                        )}
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </main>
-        </>
+                    );
+                  })}
+                </div>
+              )}
+            </main>
+          </div>
+        </div>
       ) : (
         /* Shop Directory Page with Interactive Map */
         <div className="directory-container">
