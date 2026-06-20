@@ -34,7 +34,8 @@ body {
 
 /* Mobile container - Mock device style when not on mobile, but responsive */
 .app-container {
-  max-width: 480px;
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
   margin: 0 auto;
   background-color: var(--background-color);
@@ -43,8 +44,14 @@ body {
   flex-direction: column;
   position: relative;
   overflow-x: hidden;
-  border-left: 1px solid rgba(255, 255, 255, 0.05);
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+@media (min-width: 768px) {
+  .app-container {
+    max-width: 1200px;
+    border-left: 1px solid rgba(255, 255, 255, 0.05);
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+  }
 }
 
 /* Header styling */
@@ -175,6 +182,19 @@ header {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .products-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .products-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 .product-card {
@@ -518,4 +538,35 @@ header {
   background-color: rgba(163, 230, 53, 0.1);
   color: var(--primary-color);
   border-color: rgba(163, 230, 53, 0.3);
+}
+
+/* Directory Page Split Layout on Desktop */
+.directory-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+@media (min-width: 768px) {
+  .directory-container {
+    flex-direction: row-reverse;
+    align-items: stretch;
+    height: calc(100vh - 120px);
+  }
+
+  .map-section {
+    flex: 1.2;
+    padding: 16px;
+    height: 100%;
+  }
+
+  .map-wrapper {
+    height: calc(100% - 40px);
+  }
+
+  .directory-container main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px !important;
+  }
 }

@@ -679,7 +679,7 @@ export default function CustomerPortal({ backendUrl }) {
         </>
       ) : (
         /* Shop Directory Page with Interactive Map */
-        <>
+        <div className="directory-container">
           <div className="map-section">
             <div className="map-controls">
               <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-dark)' }}>Vicinity Map (2 KM Area)</span>
@@ -802,7 +802,7 @@ export default function CustomerPortal({ backendUrl }) {
               </div>
             </div>
           </main>
-        </>
+        </div>
       )}
 
       {/* Active Order Tracking Screen (Sticky banner or modal when active) */}
