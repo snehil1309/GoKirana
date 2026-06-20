@@ -1,6 +1,27 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+import uuid
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+import boto3
+from dotenv import load_dotenv
+
+# Load env variables
+load_dotenv()
+
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+
+# Initialize S3 client
+s3_client = None
+if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_REGION
+    )
 from sqlalchemy.orm import Session
 from typing import List
 import json
@@ -358,6 +379,31 @@ def list_admin_shops(db: Session = Depends(get_db)):
 @app.get("/api/admin/orders", response_model=List[schemas.Order])
 def list_admin_orders(db: Session = Depends(get_db)):
     return db.query(models.Order).order_by(models.Order.id.desc()).all()
+
+
+# --- S3 Image Upload Route ---
+@app.post("/api/upload")
+async def upload_image(file: UploadFile = File(...)):
+    if not s3_client or not S3_BUCKET_NAME:
+        raise HTTPException(status_code=500, detail="AWS S3 credentials are not configured on the server.")
+    
+    file_ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    unique_filename = f"uploads/{uuid.uuid4()}.{file_ext}"
+    
+    try:
+        # Upload object to S3
+        s3_client.upload_fileobj(
+            file.file,
+            S3_BUCKET_NAME,
+            unique_filename,
+            ExtraArgs={"ContentType": file.content_type}
+        )
+        
+        # Public S3 object URL
+        public_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{unique_filename}"
+        return {"url": public_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
 
 
 # --- WebSocket Endpoint ---

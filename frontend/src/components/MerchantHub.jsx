@@ -22,6 +22,38 @@ export default function MerchantHub({ backendUrl }) {
   const [prodOffPrice, setProdOffPrice] = useState('');
   const [prodStock, setProdStock] = useState('');
   const [prodCategory, setProdCategory] = useState('Grocery');
+  const [prodImage, setProdImage] = useState('');
+  const [shopImage, setShopImage] = useState('');
+  const [uploading, setUploading] = useState(false);
+
+  const handleFileUpload = async (file, type) => {
+    if (!file) return;
+    setUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch(`${backendUrl}/api/upload`, {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (type === 'product') {
+          setProdImage(data.url);
+        } else if (type === 'shop') {
+          setShopImage(data.url);
+        }
+        alert('Image uploaded to S3 successfully!');
+      } else {
+        alert('Image upload failed.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error uploading file to S3.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // WebSocket & Alerts
   const [wsConnected, setWsConnected] = useState(false);
@@ -189,14 +221,13 @@ export default function MerchantHub({ backendUrl }) {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    // Default to Vadodara center coordinates for seamless vicinity testing
     const payload = {
       name,
       phone,
       password,
       address,
       coordinates: '22.3072,73.1678',
-      image_url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&q=80'
+      image_url: shopImage || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&q=80'
     };
     try {
       const res = await fetch(`${backendUrl}/api/shops/register`, {
@@ -232,6 +263,7 @@ export default function MerchantHub({ backendUrl }) {
     setProdOffPrice('');
     setProdStock('');
     setProdCategory('Grocery');
+    setProdImage('');
     setShowProductModal(true);
   };
 
@@ -243,6 +275,7 @@ export default function MerchantHub({ backendUrl }) {
     setProdOffPrice(p.offered_price);
     setProdStock(p.stock);
     setProdCategory(p.category);
+    setProdImage(p.image_url || '');
     setShowProductModal(true);
   };
 
@@ -255,7 +288,7 @@ export default function MerchantHub({ backendUrl }) {
       offered_price: parseFloat(prodOffPrice),
       stock: parseInt(prodStock),
       category: prodCategory,
-      image_url: editingProduct?.image_url || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&q=80'
+      image_url: prodImage || editingProduct?.image_url || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&q=80'
     };
 
     try {
@@ -399,6 +432,17 @@ export default function MerchantHub({ backendUrl }) {
             <input type="tel" placeholder="Phone Number" required value={phone} onChange={e => setPhone(e.target.value)} style={inputStyle} />
             <input type="text" placeholder="Shop Address" required value={address} onChange={e => setAddress(e.target.value)} style={inputStyle} />
             <input type="password" placeholder="Password" required value={password} onChange={e => setPassword(e.target.value)} style={inputStyle} />
+            <div>
+              <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px', textAlign: 'left' }}>Shop Cover Image (S3 Upload)</label>
+              <input 
+                type="file" 
+                accept="image/*" 
+                onChange={e => handleFileUpload(e.target.files[0], 'shop')} 
+                style={{ ...inputStyle, padding: '8px' }}
+              />
+              {uploading && <span style={{ fontSize: '11px', color: 'var(--primary-color)', display: 'block', marginTop: '4px', textAlign: 'left' }}>Uploading to S3...</span>}
+              {shopImage && <span style={{ fontSize: '11px', color: 'var(--success-color)', display: 'block', marginTop: '4px', textAlign: 'left' }}>✓ Uploaded to S3 successfully</span>}
+            </div>
             <button className="add-btn" type="submit" style={{ backgroundColor: 'var(--primary-color)', color: 'var(--secondary-color)', padding: '12px', fontSize: '14px', fontWeight: 'bold' }}>Register Shop</button>
             <p onClick={() => setIsRegistering(false)} style={{ textAlign: 'center', color: 'var(--primary-color)', cursor: 'pointer', fontSize: '13px', marginTop: '6px' }}>Already have a shop? Login</p>
           </form>
@@ -599,6 +643,16 @@ export default function MerchantHub({ backendUrl }) {
                     <option value="Stationery">Stationery</option>
                   </select>
                 </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-muted)', display: 'block', marginBottom: '4px', textAlign: 'left' }}>Product Image (S3 Upload)</label>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  onChange={e => handleFileUpload(e.target.files[0], 'product')} 
+                  style={{ ...inputStyle, padding: '8px' }}
+                />
+                {uploading && <span style={{ fontSize: '11px', color: 'var(--primary-color)', display: 'block', marginTop: '4px', textAlign: 'left' }}>Uploading to S3...</span>}
+                {prodImage && <span style={{ fontSize: '11px', color: 'var(--success-color)', display: 'block', marginTop: '4px', textAlign: 'left' }}>✓ Uploaded to S3 successfully</span>}
               </div>
               <button className="add-btn" type="submit" style={{ backgroundColor: 'var(--primary-color)', color: 'var(--secondary-color)', padding: '12px', fontSize: '14px', fontWeight: 'bold', marginTop: '10px' }}>Save to Catalog</button>
             </form>

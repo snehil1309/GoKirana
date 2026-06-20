@@ -1,0 +1,7 @@
+{
+  "application": "Quickies",
+  "environment": "development",
+  "test": true,
+  "message": "S3 upload successful",
+  "timestamp": "2026-06-21T00:00:00Z"
+}
