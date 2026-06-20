@@ -626,7 +626,7 @@ export default function CustomerPortal({ backendUrl }) {
             </aside>
 
             {/* Right Products Feed */}
-            <main className="products-section" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 80px 16px' }}>
+            <main className="products-section" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '12px 16px 80px 16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 'bold' }}>
                   {selectedCategory ? `${selectedCategory}` : 'All Products'}
@@ -649,7 +649,7 @@ export default function CustomerPortal({ backendUrl }) {
                         <div className="product-image-container" onClick={() => setSelectedProduct(p)}>
                           <img src={p.image_url || 'https://via.placeholder.com/150'} alt={p.name} className="product-image" />
                         </div>
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }} onClick={() => setSelectedProduct(p)}>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }} onClick={() => setSelectedProduct(p)}>
                           <h4 className="product-name">{p.name}</h4>
                           <span className="product-desc">{p.description}</span>
                         </div>
