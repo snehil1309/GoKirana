@@ -63,6 +63,8 @@ class Order(Base):
     total_amount = Column(Float)
     delivery_coordinates = Column(String, nullable=True)  # "lat,lng" for live tracking
     delivery_address = Column(String, nullable=True)  # Full customer delivery address
+    transaction_id = Column(String, nullable=True, unique=True, index=True) # PhonePe transaction ID
+    payment_status = Column(String, default="Pending") # Pending, Success, Failed
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

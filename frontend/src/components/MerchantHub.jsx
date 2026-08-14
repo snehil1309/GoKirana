@@ -138,49 +138,63 @@ export default function MerchantHub({ backendUrl, user, setUser, activeView, set
 
     let isMounted = true;
     let timerId = null;
-    let wsUrl = backendUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-    let ws = new WebSocket(`${wsUrl}/ws/shop/${shop.id}`);
+    let ws = null;
+    
+    const connectWs = () => {
+      let wsUrl = backendUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+      ws = new WebSocket(`${wsUrl}/ws/shop/${shop.id}`);
 
-    ws.onopen = () => {
-      if (isMounted) setWsConnected(true);
-    };
+      ws.onopen = () => {
+        if (isMounted) setWsConnected(true);
+      };
 
-    ws.onmessage = (event) => {
-      if (!isMounted) return;
-      try {
-        const data = JSON.parse(event.data);
-        if (data.event === 'NEW_ORDER') {
-          const order = data.order;
-          setUnacceptedOrders(prev => [...prev, order]);
-          fetchShopData(shop.id);
+      ws.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === 'NEW_ORDER') {
+            const order = data.order;
+            setUnacceptedOrders(prev => {
+              if(prev.find(o => o.id === order.id)) return prev;
+              return [...prev, order];
+            });
+            fetchShopData(shop.id);
+          }
+        } catch (e) {
+          console.error("WS error parsing message", e);
         }
-      } catch (e) {
-        console.error("WS error parsing message", e);
-      }
+      };
+
+      ws.onerror = () => {
+        if (isMounted) setWsConnected(false);
+      };
+
+      ws.onclose = () => {
+        if (isMounted) {
+          setWsConnected(false);
+          timerId = setTimeout(() => {
+            if (isMounted && shop && shop.id) {
+              fetchShopData(shop.id);
+              connectWs(); // Reconnect the websocket
+            }
+          }, 3000);
+        }
+      };
     };
 
-    ws.onerror = () => {
-      if (isMounted) setWsConnected(false);
-    };
-
-    ws.onclose = () => {
-      if (isMounted) {
-        setWsConnected(false);
-        timerId = setTimeout(() => {
-          if (isMounted && shop && shop.id) fetchShopData(shop.id);
-        }, 3000);
-      }
-    };
+    connectWs();
 
     return () => {
       isMounted = false;
       if (timerId) clearTimeout(timerId);
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onerror = null;
-      ws.onclose = null;
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
       }
     };
   }, [shop?.id, backendUrl]);
@@ -267,6 +281,10 @@ export default function MerchantHub({ backendUrl, user, setUser, activeView, set
       if (orderRes.ok) {
         const orderData = await orderRes.json();
         setOrders(orderData);
+        
+        // Populate unacceptedOrders from API so they beep if missed or on page reload
+        const pending = orderData.filter(o => o.status === 'Ordered');
+        setUnacceptedOrders(pending);
         
         const now = new Date();
         const timersUpdate = {};

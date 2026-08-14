@@ -19,7 +19,7 @@ class Product(ProductBase):
     shop_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ShopBase(BaseModel):
     name: str
@@ -35,7 +35,7 @@ class Shop(ShopBase):
     active: bool
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ShopStatusUpdate(BaseModel):
@@ -67,7 +67,7 @@ class OrderItem(OrderItemBase):
     order_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class OrderCreate(BaseModel):
     customer_phone: str
@@ -76,6 +76,7 @@ class OrderCreate(BaseModel):
     total_amount: float
     delivery_coordinates: Optional[str] = None
     delivery_address: Optional[str] = None
+    frontend_url: Optional[str] = "http://localhost:5173"
 
 class Order(BaseModel):
     id: int
@@ -85,12 +86,15 @@ class Order(BaseModel):
     total_amount: float
     delivery_coordinates: Optional[str] = None
     delivery_address: Optional[str] = None
+    transaction_id: Optional[str] = None
+    payment_status: str
+    redirect_url: Optional[str] = None
     created_at: datetime
     items: List[OrderItem]
 
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class OrderStatusUpdate(BaseModel):
     status: str

@@ -6,6 +6,10 @@ import random
 from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
+import requests
+import hashlib
+import base64
+import json
 
 from fastapi import (
     FastAPI,
@@ -279,6 +283,11 @@ def delete_product(
     }
 
 
+PHONEPE_MERCHANT_ID = "PGTESTPAYUAT86"
+PHONEPE_SALT_KEY = "96434309-7796-489d-8924-ab56988a6076"
+PHONEPE_SALT_INDEX = "1"
+PHONEPE_ENV = "UAT"
+
 # --- Orders Routes ---
 @app.post("/api/orders", response_model=schemas.Order)
 async def create_order(
@@ -307,7 +316,8 @@ async def create_order(
         status="Ordered",
         total_amount=order.total_amount,
         delivery_coordinates=final_coords,
-        delivery_address=final_address
+        delivery_address=final_address,
+        payment_status="Pending"
     )
 
     db.add(db_order)
@@ -327,46 +337,167 @@ async def create_order(
         db.add(db_item)
         order_items.append(db_item)
 
-        # Deduct stock
-        product = db.query(models.Product).filter(
-            models.Product.id == item.product_id
-        ).first()
-
-        if product:
-            product.stock = max(
-                0,
-                product.stock - item.quantity
-            )
-
     db.commit()
     db.refresh(db_order)
 
-    # Notify Shop via WebSockets immediately
-    notification = {
-        "event": "NEW_ORDER",
-        "order": {
-            "id": db_order.id,
-            "customer_phone": db_order.customer_phone,
-            "total_amount": db_order.total_amount,
-            "delivery_coordinates": db_order.delivery_coordinates,
-            "delivery_address": db_order.delivery_address,
-            "items": [
-                {
-                    "product_name": item.product_name,
-                    "quantity": item.quantity
-                }
-                for item in order_items
-            ]
+    # Generate transaction ID for PhonePe
+    transaction_id = f"ZIPLO_{db_order.id}_{int(datetime.now().timestamp())}"
+    db_order.transaction_id = transaction_id
+    db.commit()
+
+    # Initialize PhonePe Payment
+    payload = {
+        "merchantId": PHONEPE_MERCHANT_ID,
+        "merchantTransactionId": transaction_id,
+        "merchantUserId": order.customer_phone,
+        "amount": int(order.total_amount * 100), # Amount in paise
+        "redirectUrl": f"{order.frontend_url}/#order-status?transactionId={transaction_id}",
+        "redirectMode": "REDIRECT",
+        "callbackUrl": "http://192.168.29.36:8000/api/payment/callback",
+        "mobileNumber": order.customer_phone,
+        "paymentInstrument": {
+            "type": "PAY_PAGE"
         }
     }
+    
+    base64_payload = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+    string_to_hash = base64_payload + "/pg/v1/pay" + PHONEPE_SALT_KEY
+    checksum = hashlib.sha256(string_to_hash.encode("utf-8")).hexdigest() + "###" + PHONEPE_SALT_INDEX
 
+    headers = {
+        "Content-Type": "application/json",
+        "X-VERIFY": checksum
+    }
 
-    await manager.notify_shop(
-        order.shop_id,
-        notification
-    )
+    try:
+        response = requests.post(
+            "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay",
+            json={"request": base64_payload},
+            headers=headers,
+            timeout=10
+        )
+        data = response.json()
+        if data.get("success"):
+            redirect_url = data["data"]["instrumentResponse"]["redirectInfo"]["url"]
+            # Convert to dict to inject redirect_url dynamically for the response schema
+            order_resp = schemas.Order.model_validate(db_order).model_dump()
+            order_resp["redirect_url"] = redirect_url
+            return order_resp
+    except Exception as e:
+        logger.error(f"PhonePe Init Error: {e}")
+    
+    raise HTTPException(status_code=500, detail=f"Failed to init payment: {e}")
 
-    return db_order
+from fastapi import Request
+
+@app.post("/api/payment/callback")
+async def payment_callback(request: Request, db: Session = Depends(get_db)):
+    x_verify = request.headers.get("x-verify")
+    try:
+        data = await request.json()
+        response_b64 = data.get("response")
+        if not response_b64:
+            return {"status": "ignored"}
+        
+        string_to_hash = response_b64 + PHONEPE_SALT_KEY
+        expected_checksum = hashlib.sha256(string_to_hash.encode("utf-8")).hexdigest() + "###" + PHONEPE_SALT_INDEX
+        
+        if x_verify != expected_checksum:
+            return {"status": "invalid_signature"}
+            
+        decoded = json.loads(base64.b64decode(response_b64).decode("utf-8"))
+        transaction_id = decoded.get("data", {}).get("merchantTransactionId")
+        success = decoded.get("success")
+        code = decoded.get("code")
+        
+        if transaction_id:
+            order = db.query(models.Order).filter(models.Order.transaction_id == transaction_id).first()
+            if order:
+                if success and code == "PAYMENT_SUCCESS":
+                    if order.payment_status != "Success":
+                        order.payment_status = "Success"
+
+                        # Deduct stock
+                        for item in order.items:
+                            product = db.query(models.Product).filter(
+                                models.Product.id == item.product_id
+                            ).first()
+                            if product:
+                                product.stock = max(0, product.stock - item.quantity)
+                        
+                        db.commit()
+                        
+                        items_payload = [{"product_name": item.product_name, "quantity": item.quantity} for item in order.items]
+                        notification = {
+                            "event": "NEW_ORDER",
+                            "order": {
+                                "id": order.id,
+                                "customer_phone": order.customer_phone,
+                                "total_amount": order.total_amount,
+                                "delivery_coordinates": order.delivery_coordinates,
+                                "delivery_address": order.delivery_address,
+                                "items": items_payload
+                            }
+                        }
+                        await manager.notify_shop(order.shop_id, notification)
+                else:
+                    order.payment_status = "Failed"
+                    db.commit()
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
+        
+    return {"status": "ok"}
+
+@app.get("/api/payment/status/{transaction_id}")
+async def check_payment_status(transaction_id: str, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.transaction_id == transaction_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    if order.payment_status == "Pending":
+        string_to_hash = f"/pg/v1/status/{PHONEPE_MERCHANT_ID}/{transaction_id}" + PHONEPE_SALT_KEY
+        checksum = hashlib.sha256(string_to_hash.encode("utf-8")).hexdigest() + "###" + PHONEPE_SALT_INDEX
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-VERIFY": checksum,
+            "X-MERCHANT-ID": PHONEPE_MERCHANT_ID
+        }
+        try:
+            resp = requests.get(f"https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/status/{PHONEPE_MERCHANT_ID}/{transaction_id}", headers=headers)
+            data = resp.json()
+            if data.get("success") and data.get("code") == "PAYMENT_SUCCESS":
+                order.payment_status = "Success"
+                # Deduct stock
+                for item in order.items:
+                    product = db.query(models.Product).filter(
+                        models.Product.id == item.product_id
+                    ).first()
+                    if product:
+                        product.stock = max(0, product.stock - item.quantity)
+                db.commit()
+                
+                # Push WebSocket notification
+                items_payload = [{"product_name": item.product_name, "quantity": item.quantity} for item in order.items]
+                notification = {
+                    "event": "NEW_ORDER",
+                    "order": {
+                        "id": order.id,
+                        "customer_phone": order.customer_phone,
+                        "total_amount": order.total_amount,
+                        "delivery_coordinates": order.delivery_coordinates,
+                        "delivery_address": order.delivery_address,
+                        "items": items_payload
+                    }
+                }
+                await manager.notify_shop(order.shop_id, notification)
+            elif data.get("code") in ["PAYMENT_ERROR", "PAYMENT_DECLINED", "PAYMENT_CANCELLED"]:
+                order.payment_status = "Failed"
+                db.commit()
+        except Exception as e:
+            logger.error(f"Status check error: {e}")
+
+    return {"payment_status": order.payment_status, "order_id": order.id, "transaction_id": transaction_id}
 
 
 @app.get(
@@ -378,7 +509,8 @@ def get_customer_orders(
     db: Session = Depends(get_db)
 ):
     return db.query(models.Order).filter(
-        models.Order.customer_phone == phone
+        models.Order.customer_phone == phone,
+        models.Order.payment_status == 'Success'
     ).order_by(
         models.Order.id.desc()
     ).all()
@@ -393,7 +525,8 @@ def get_shop_orders(
     db: Session = Depends(get_db)
 ):
     return db.query(models.Order).filter(
-        models.Order.shop_id == shop_id
+        models.Order.shop_id == shop_id,
+        models.Order.payment_status == 'Success'
     ).order_by(
         models.Order.id.desc()
     ).all()

@@ -14,7 +14,16 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
   const [selectedShop, setSelectedShop] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [cart, setCart] = useState({});
+  const [cart, setCart] = useState(() => {
+    const saved = localStorage.getItem('ziplo_cart');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return {}; }
+    }
+    return {};
+  });
+  useEffect(() => {
+    localStorage.setItem('ziplo_cart', JSON.stringify(cart));
+  }, [cart]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
 
@@ -181,6 +190,44 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
       fetchPastOrders(userPhone);
     }
   }, [isLoggedIn, userPhone]);
+
+  // Handle return from PhonePe
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.startsWith('#order-status')) {
+      const urlParams = new URLSearchParams(hash.split('?')[1]);
+      const transactionId = urlParams.get('transactionId');
+      if (transactionId) {
+        // Poll for status
+        const checkStatus = async () => {
+          try {
+            const res = await fetch(`${backendUrl}/api/payment/status/${transactionId}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.payment_status === 'Success') {
+                alert('Payment Successful! Your order is placed.');
+                setCart({});
+                localStorage.removeItem('ziplo_cart');
+                // Fetch updated orders so the new one becomes activeOrder
+                if (userPhone) fetchPastOrders(userPhone);
+              } else if (data.payment_status === 'Failed') {
+                alert('Your order is not processed as your payment failed.');
+                setIsCartOpen(true);
+                setShowPaymentModal(true);
+              } else {
+                alert('Payment is still Pending.');
+              }
+              // Clean up the URL hash to avoid re-triggering
+              window.history.replaceState(null, '', window.location.pathname + '#consumer');
+            }
+          } catch (e) {
+            console.error('Failed to check payment status:', e);
+          }
+        };
+        checkStatus();
+      }
+    }
+  }, [backendUrl, userPhone]);
 
   // Haversine formula for distance calculation in KM
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -436,7 +483,12 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
           if (activeOrder) {
             const updatedMatching = data.find(o => o.id === activeOrder.id);
             if (updatedMatching) {
-              setActiveOrder(updatedMatching);
+              if (updatedMatching.status === 'Delivered' && activeOrder.status !== 'Delivered') {
+                setActiveOrder(null);
+                alert("Your order has been delivered successfully!");
+              } else {
+                setActiveOrder(updatedMatching);
+              }
             }
           } else {
             const incomplete = data.find(o => o.status !== 'Delivered' && o.status !== 'Cancelled');
@@ -884,7 +936,7 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
     setShowPaymentModal(true);
   };
 
-  const handlePaymentSuccess = async () => {
+  const handlePlaceOrderAndPay = async () => {
     const itemsList = Object.values(cart).map(item => ({
       product_id: item.product.id,
       product_name: item.product.name,
@@ -904,7 +956,8 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
       items: itemsList,
       total_amount: getCartTotal(),
       delivery_coordinates: finalCoords,
-      delivery_address: finalAddress
+      delivery_address: finalAddress,
+      frontend_url: window.location.origin
     };
 
     try {
@@ -915,12 +968,18 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
       });
       if (res.ok) {
         const orderData = await res.json();
-        setActiveOrder(orderData);
-        setCart({});
-        setShowPaymentModal(false);
-        setIsCartOpen(false);
-        fetchProducts(); // Refresh stocks
-        fetchPastOrders(userPhone);
+        // Do not clear cart until payment succeeds
+        if (orderData.redirect_url) {
+          window.location.href = orderData.redirect_url;
+        } else {
+          setCart({});
+          localStorage.removeItem('ziplo_cart');
+          setActiveOrder(orderData);
+          setShowPaymentModal(false);
+          setIsCartOpen(false);
+          fetchProducts(); // Refresh stocks
+          fetchPastOrders(userPhone);
+        }
       } else {
         alert('Order placement failed.');
       }
@@ -2946,7 +3005,7 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
               </div>
 
               <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                <button onClick={handlePaymentSuccess} style={{
+                <button onClick={handlePlaceOrderAndPay} style={{
                   flex: 1,
                   backgroundColor: 'var(--primary-color)',
                   color: 'var(--secondary-color)',
@@ -2957,20 +3016,7 @@ export default function CustomerPortal({ backendUrl, user, setUser, activeView, 
                   fontFamily: 'var(--font-family)',
                   cursor: 'pointer'
                 }}>
-                  Simulate Success
-                </button>
-                <button onClick={() => { alert('Demo payment failed.'); setShowPaymentModal(false); }} style={{
-                  flex: 1,
-                  backgroundColor: 'var(--error-color)',
-                  color: 'white',
-                  border: 'none',
-                  padding: '12px',
-                  borderRadius: '10px',
-                  fontWeight: 'bold',
-                  fontFamily: 'var(--font-family)',
-                  cursor: 'pointer'
-                }}>
-                  Simulate Failure
+                  Proceed to Pay
                 </button>
               </div>
             </div>
