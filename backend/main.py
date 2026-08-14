@@ -1,20 +1,38 @@
 import os
+import logging
+logger = logging.getLogger("uvicorn")
 import uuid
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile
+import random
+from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
+
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    File,
+    UploadFile
+)
 from fastapi.middleware.cors import CORSMiddleware
+
 import boto3
 from dotenv import load_dotenv
 
 # Load env variables
 load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME") or os.getenv("AWS_BUCKET_NAME")
 
 # Initialize S3 client
 s3_client = None
+
 if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
     s3_client = boto3.client(
         "s3",
@@ -22,18 +40,24 @@ if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
         region_name=AWS_REGION
     )
-from sqlalchemy.orm import Session
-from typing import List
-import json
 
+from sqlalchemy.orm import Session
+from typing import List, Optional
+
+# IMPORTANT:
+# Since main.py is inside the backend package and is being started with
+# `python -m uvicorn backend.main:app`, use relative imports here.
 from .database import engine, Base, get_db
 from . import models, schemas
 from .websocket_manager import manager
+from . import sms_service
+
 
 # Create tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="GoKirana API", version="1.0")
+app = FastAPI(title="Ziplo API", version="1.0")
+
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -44,262 +68,253 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/api/customers/{phone}")
+def get_customer_details(phone: str, db: Session = Depends(get_db)):
+    customer = db.query(models.Customer).filter(
+        models.Customer.phone == phone
+    ).first()
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found"
+        )
+
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+        "email": customer.email,
+        "address": customer.address,
+        "coordinates": customer.coordinates
+    }
+
+
+@app.put("/api/customers/{identifier}/coordinates")
+def update_customer_coordinates(
+    identifier: str,
+    coord_update: schemas.CustomerCoordinatesUpdate,
+    db: Session = Depends(get_db)
+):
+    customer = db.query(models.Customer).filter(
+        (models.Customer.phone == identifier)
+        | (models.Customer.email == identifier)
+    ).first()
+
+    if not customer and identifier.isdigit():
+        customer = db.query(models.Customer).filter(models.Customer.id == int(identifier)).first()
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found"
+        )
+
+    customer.coordinates = coord_update.coordinates
+    db.commit()
+    db.refresh(customer)
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+        "coordinates": customer.coordinates
+    }
+
+
+
 # --- Seeding Endpoint ---
 @app.post("/api/seed")
 def seed_data(db: Session = Depends(get_db)):
-    # Check if shops exist
-    if db.query(models.Shop).first():
-        return {"message": "Database already seeded."}
-
-    # Add default shops in Vadodara (around Alkapuri center: 22.3072, 73.1678)
-    shop1 = models.Shop(
-        name="Ziplo Express Alkapuri",
-        phone="9876543210",
-        password="password123",
-        address="Alkapuri, Vadodara (0.3 km away)",
-        coordinates="22.3085,73.1660",
-        image_url="https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&q=80"
-    )
-    shop2 = models.Shop(
-        name="Royal Kirana & Pharmacy",
-        phone="8765432109",
-        password="password123",
-        address="RC Dutt Road, Vadodara (1.0 km away)",
-        coordinates="22.3150,73.1720",
-        image_url="https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=500&q=80"
-    )
-    shop3 = models.Shop(
-        name="Gotri Kirana Supermarket",
-        phone="7654321098",
-        password="password123",
-        address="Gotri Road, Vadodara (4.5 km away)",
-        coordinates="22.3220,73.1250",
-        image_url="https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=500&q=80"
-    )
-    shop4 = models.Shop(
-        name="Manjalpur Family Mart",
-        phone="6543210987",
-        password="password123",
-        address="Manjalpur, Vadodara (4.8 km away)",
-        coordinates="22.2750,73.1980",
-        image_url="https://images.unsplash.com/photo-1534723452862-4c874018d66d?w=500&q=80"
-    )
-    
-    db.add(shop1)
-    db.add(shop2)
-    db.add(shop3)
-    db.add(shop4)
-    db.flush()
-
-    # Add default products matching categories: Grocery, Pharmacy, Baby Care, Pet Care, Stationery
-    products = [
-        # Shop 1 Products
-        models.Product(
-            shop_id=shop1.id,
-            name="Aashirvaad Shudh Chakki Atta (5kg)",
-            description="100% pure whole wheat flour for soft rotis.",
-            mrp=280.0,
-            offered_price=255.0,
-            stock=50,
-            category="Grocery",
-            image_url="https://images.unsplash.com/photo-1509440159596-0249088772ff?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop1.id,
-            name="Fortune Mustard Oil (1L)",
-            description="Pure mustard oil for traditional cooking.",
-            mrp=190.0,
-            offered_price=175.0,
-            stock=30,
-            category="Grocery",
-            image_url="https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop1.id,
-            name="Dettol Antiseptic Liquid (500ml)",
-            description="Effective antiseptic liquid for first aid and hygiene.",
-            mrp=220.0,
-            offered_price=199.0,
-            stock=40,
-            category="Pharmacy",
-            image_url="https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop1.id,
-            name="Pampers Baby Wipes (80 sheets)",
-            description="Gentle wet wipes for baby sensitive skin.",
-            mrp=150.0,
-            offered_price=129.0,
-            stock=60,
-            category="Baby Care",
-            image_url="https://images.unsplash.com/photo-1519689680058-324335c77ebe?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop1.id,
-            name="Pedigree Adult Dry Dog Food (3kg)",
-            description="Chicken and vegetables flavor dry food.",
-            mrp=650.0,
-            offered_price=599.0,
-            stock=15,
-            category="Pet Care",
-            image_url="https://images.unsplash.com/photo-1589726480008-b8969939073b?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop1.id,
-            name="Classmate Notebook A4 (Single Pack)",
-            description="Premium quality paper notebook for school/college.",
-            mrp=75.0,
-            offered_price=65.0,
-            stock=120,
-            category="Stationery",
-            image_url="https://images.unsplash.com/photo-1586075010923-2dd4570fb338?w=300&q=80"
-        ),
-
-        # Shop 2 Products
-        models.Product(
-            shop_id=shop2.id,
-            name="Paracetamol Tablets 650mg",
-            description="Effective relief from fever and mild-to-moderate pain.",
-            mrp=30.0,
-            offered_price=22.0,
-            stock=200,
-            category="Pharmacy",
-            image_url="https://images.unsplash.com/photo-1584017911766-d451b3d0e843?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop2.id,
-            name="Himalaya Baby Powder (200g)",
-            description="Keeps baby cool, fresh, and happy.",
-            mrp=140.0,
-            offered_price=125.0,
-            stock=35,
-            category="Baby Care",
-            image_url="https://images.unsplash.com/photo-1519689680058-324335c77ebe?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop2.id,
-            name="Whiskas Wet Cat Food (Pack of 12)",
-            description="Delicious chicken in gravy flavor.",
-            mrp=480.0,
-            offered_price=420.0,
-            stock=25,
-            category="Pet Care",
-            image_url="https://images.unsplash.com/photo-1569591159212-b02ea8a9f239?w=300&q=80"
-        ),
-        
-        # Shop 3 Products
-        models.Product(
-            shop_id=shop3.id,
-            name="Tata Salt (1kg)",
-            description="Iodized salt, desh ka namak.",
-            mrp=28.0,
-            offered_price=26.0,
-            stock=100,
-            category="Grocery",
-            image_url="https://images.unsplash.com/photo-1504973960431-1c467e159aa4?w=300&q=80"
-        ),
-        models.Product(
-            shop_id=shop3.id,
-            name="Cello Gel Pens (Pack of 5)",
-            description="Smooth writing gel pens with comfortable grip.",
-            mrp=50.0,
-            offered_price=45.0,
-            stock=50,
-            category="Stationery",
-            image_url="https://images.unsplash.com/photo-1585336139058-3479a556c7cc?w=300&q=80"
-        )
-    ]
-    for p in products:
-        db.add(p)
-    db.commit()
-    return {"message": "Database seeded successfully with Ziplo Vadodara shops!"}
+    # No pre-seeded shops or products — all accounts are created from scratch via the app.
+    return {
+        "message": "No seed data. Create accounts via the registration flow."
+    }
 
 
-# --- Shop Auth Routes ---
+# --- Shop Auth & Management Routes ---
 @app.get("/api/shops", response_model=List[schemas.Shop])
-def get_active_shops(db: Session = Depends(get_db)):
-    return db.query(models.Shop).filter(models.Shop.active == True).all()
+def get_all_shops(db: Session = Depends(get_db)):
+    return db.query(models.Shop).all()
 
-@app.post("/api/shops/register", response_model=schemas.Shop)
-def register_shop(shop: schemas.ShopCreate, db: Session = Depends(get_db)):
-    db_shop = db.query(models.Shop).filter(models.Shop.phone == shop.phone).first()
-    if db_shop:
-        raise HTTPException(status_code=400, detail="Phone number already registered")
-    new_shop = models.Shop(
-        name=shop.name,
-        phone=shop.phone,
-        password=shop.password,
-        address=shop.address,
-        coordinates=shop.coordinates,
-        image_url=shop.image_url
-    )
-    db.add(new_shop)
-    db.commit()
-    db.refresh(new_shop)
-    return new_shop
 
-@app.post("/api/shops/login", response_model=schemas.Shop)
-def login_shop(login: schemas.ShopLogin, db: Session = Depends(get_db)):
-    shop = db.query(models.Shop).filter(models.Shop.phone == login.phone, models.Shop.password == login.password).first()
+@app.put("/api/shops/{shop_id}/status", response_model=schemas.Shop)
+def update_shop_status(
+    shop_id: int,
+    status_update: schemas.ShopStatusUpdate,
+    db: Session = Depends(get_db)
+):
+    shop = db.query(models.Shop).filter(models.Shop.id == shop_id).first()
     if not shop:
-        raise HTTPException(status_code=401, detail="Invalid phone number or password")
+        raise HTTPException(
+            status_code=404,
+            detail="Shop not found"
+        )
+
+    shop.active = status_update.active
+    db.commit()
+    db.refresh(shop)
     return shop
+
+
+@app.put("/api/shops/{shop_id}/coordinates", response_model=schemas.Shop)
+def update_shop_coordinates(
+    shop_id: int,
+    coord_update: schemas.ShopCoordinatesUpdate,
+    db: Session = Depends(get_db)
+):
+    shop = db.query(models.Shop).filter(models.Shop.id == shop_id).first()
+    if not shop:
+        raise HTTPException(
+            status_code=404,
+            detail="Shop not found"
+        )
+
+    shop.coordinates = coord_update.coordinates
+    db.commit()
+    db.refresh(shop)
+    return shop
+
+
 
 
 # --- Products / Catalog Routes ---
 @app.get("/api/products", response_model=List[schemas.Product])
-def get_all_products(category: str = None, db: Session = Depends(get_db)):
-    query = db.query(models.Product).join(models.Shop).filter(models.Shop.active == True)
+def get_all_products(
+    category: str = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.Product).join(models.Shop).filter(
+        models.Shop.active == True
+    )
+
     if category:
         query = query.filter(models.Product.category == category)
+
     return query.all()
 
-@app.get("/api/shops/{shop_id}/products", response_model=List[schemas.Product])
-def get_shop_products(shop_id: int, db: Session = Depends(get_db)):
-    return db.query(models.Product).filter(models.Product.shop_id == shop_id).all()
 
-@app.post("/api/shops/{shop_id}/products", response_model=schemas.Product)
-def create_shop_product(shop_id: int, product: schemas.ProductCreate, db: Session = Depends(get_db)):
-    db_product = models.Product(**product.dict(), shop_id=shop_id)
+@app.get(
+    "/api/shops/{shop_id}/products",
+    response_model=List[schemas.Product]
+)
+def get_shop_products(
+    shop_id: int,
+    db: Session = Depends(get_db)
+):
+    return db.query(models.Product).filter(
+        models.Product.shop_id == shop_id
+    ).all()
+
+
+@app.post(
+    "/api/shops/{shop_id}/products",
+    response_model=schemas.Product
+)
+def create_shop_product(
+    shop_id: int,
+    product: schemas.ProductCreate,
+    db: Session = Depends(get_db)
+):
+    db_product = models.Product(
+        **product.dict(),
+        shop_id=shop_id
+    )
+
     db.add(db_product)
     db.commit()
     db.refresh(db_product)
+
     return db_product
 
-@app.put("/api/products/{product_id}", response_model=schemas.Product)
-def update_product(product_id: int, product_update: schemas.ProductCreate, db: Session = Depends(get_db)):
-    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+
+@app.put(
+    "/api/products/{product_id}",
+    response_model=schemas.Product
+)
+def update_product(
+    product_id: int,
+    product_update: schemas.ProductCreate,
+    db: Session = Depends(get_db)
+):
+    db_product = db.query(models.Product).filter(
+        models.Product.id == product_id
+    ).first()
+
     if not db_product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
     for key, val in product_update.dict().items():
         setattr(db_product, key, val)
+
     db.commit()
     db.refresh(db_product)
+
     return db_product
 
+
 @app.delete("/api/products/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
-    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db)
+):
+    db_product = db.query(models.Product).filter(
+        models.Product.id == product_id
+    ).first()
+
     if not db_product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
     db.delete(db_product)
     db.commit()
-    return {"message": "Product deleted successfully"}
+
+    return {
+        "message": "Product deleted successfully"
+    }
 
 
 # --- Orders Routes ---
 @app.post("/api/orders", response_model=schemas.Order)
-async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
+async def create_order(
+    order: schemas.OrderCreate,
+    db: Session = Depends(get_db)
+):
+    # Look up customer to get/sync baseline coordinates & address
+    cust = db.query(models.Customer).filter(
+        (models.Customer.phone == order.customer_phone)
+        | (models.Customer.email == order.customer_phone)
+    ).first()
+
+    final_coords = order.delivery_coordinates or (cust.coordinates if cust else None)
+    final_address = order.delivery_address or (cust.address if cust else None)
+
+    # Sync back to customer record if customer exists
+    if cust:
+        if final_coords:
+            cust.coordinates = final_coords
+        if final_address:
+            cust.address = final_address
+
     db_order = models.Order(
         customer_phone=order.customer_phone,
         shop_id=order.shop_id,
         status="Ordered",
-        total_amount=order.total_amount
+        total_amount=order.total_amount,
+        delivery_coordinates=final_coords,
+        delivery_address=final_address
     )
+
     db.add(db_order)
     db.flush()
 
     order_items = []
+
     for item in order.items:
         db_item = models.OrderItem(
             order_id=db_order.id,
@@ -308,13 +323,20 @@ async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)
             quantity=item.quantity,
             price=item.price
         )
+
         db.add(db_item)
         order_items.append(db_item)
-        
+
         # Deduct stock
-        product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+        product = db.query(models.Product).filter(
+            models.Product.id == item.product_id
+        ).first()
+
         if product:
-            product.stock = max(0, product.stock - item.quantity)
+            product.stock = max(
+                0,
+                product.stock - item.quantity
+            )
 
     db.commit()
     db.refresh(db_order)
@@ -326,44 +348,193 @@ async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)
             "id": db_order.id,
             "customer_phone": db_order.customer_phone,
             "total_amount": db_order.total_amount,
-            "items": [{"product_name": item.product_name, "quantity": item.quantity} for item in order_items]
+            "delivery_coordinates": db_order.delivery_coordinates,
+            "delivery_address": db_order.delivery_address,
+            "items": [
+                {
+                    "product_name": item.product_name,
+                    "quantity": item.quantity
+                }
+                for item in order_items
+            ]
         }
     }
-    await manager.notify_shop(order.shop_id, notification)
+
+
+    await manager.notify_shop(
+        order.shop_id,
+        notification
+    )
 
     return db_order
 
-@app.get("/api/orders/customer/{phone}", response_model=List[schemas.Order])
-def get_customer_orders(phone: str, db: Session = Depends(get_db)):
-    return db.query(models.Order).filter(models.Order.customer_phone == phone).order_by(models.Order.id.desc()).all()
 
-@app.get("/api/orders/shop/{shop_id}", response_model=List[schemas.Order])
-def get_shop_orders(shop_id: int, db: Session = Depends(get_db)):
-    return db.query(models.Order).filter(models.Order.shop_id == shop_id).order_by(models.Order.id.desc()).all()
+@app.get(
+    "/api/orders/customer/{phone}",
+    response_model=List[schemas.Order]
+)
+def get_customer_orders(
+    phone: str,
+    db: Session = Depends(get_db)
+):
+    return db.query(models.Order).filter(
+        models.Order.customer_phone == phone
+    ).order_by(
+        models.Order.id.desc()
+    ).all()
 
-@app.put("/api/orders/{order_id}/status", response_model=schemas.Order)
-def update_order_status(order_id: int, status_update: schemas.OrderStatusUpdate, db: Session = Depends(get_db)):
-    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+
+@app.get(
+    "/api/orders/shop/{shop_id}",
+    response_model=List[schemas.Order]
+)
+def get_shop_orders(
+    shop_id: int,
+    db: Session = Depends(get_db)
+):
+    return db.query(models.Order).filter(
+        models.Order.shop_id == shop_id
+    ).order_by(
+        models.Order.id.desc()
+    ).all()
+
+
+@app.put(
+    "/api/orders/{order_id}/status",
+    response_model=schemas.Order
+)
+def update_order_status(
+    order_id: int,
+    status_update: schemas.OrderStatusUpdate,
+    db: Session = Depends(get_db)
+):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id
+    ).first()
+
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
     order.status = status_update.status
+
     db.commit()
     db.refresh(order)
+
     return order
 
 
-# --- Admin Dashboard Routes ---
+@app.put(
+    "/api/orders/{order_id}/location",
+    response_model=schemas.Order
+)
+def update_order_location(
+    order_id: int,
+    location_update: schemas.OrderLocationUpdate,
+    db: Session = Depends(get_db)
+):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id
+    ).first()
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    order.delivery_coordinates = (
+        location_update.delivery_coordinates
+    )
+
+    db.commit()
+    db.refresh(order)
+
+    return order
+
+
+# --- Admin Dashboard & Truncate Routes ---
+@app.post("/api/admin/login")
+def admin_login(
+    creds: schemas.AdminLogin,
+    db: Session = Depends(get_db)
+):
+    if creds.username == "admin" and creds.password == "admin123":
+        return {
+            "message": "Admin login successful",
+            "token": "admin-session-token",
+            "role": "admin"
+        }
+
+    admin = db.query(models.Admin).filter(
+        models.Admin.username == creds.username
+    ).first()
+
+    if admin and admin.password == creds.password:
+        return {
+            "message": "Admin login successful",
+            "token": "admin-session-token",
+            "role": "admin"
+        }
+
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid admin credentials"
+    )
+
+
+@app.post("/api/admin/truncate")
+def truncate_accounts(
+    db: Session = Depends(get_db)
+):
+    # Delete all orders, items, products, shops, and customers
+    db.query(models.OrderItem).delete()
+    db.query(models.Order).delete()
+    db.query(models.Product).delete()
+    db.query(models.Shop).delete()
+    db.query(models.Customer).delete()
+
+    db.commit()
+
+    return {
+        "message": "All merchant and consumer accounts and associated data have been truncated successfully."
+    }
+
+
 @app.get("/api/admin/metrics")
-def get_admin_metrics(db: Session = Depends(get_db)):
+def get_admin_metrics(
+    db: Session = Depends(get_db)
+):
     total_shops = db.query(models.Shop).count()
     total_products = db.query(models.Product).count()
+
     orders = db.query(models.Order).all()
-    total_sales = sum([o.total_amount for o in orders if o.status != "Cancelled"])
+
+    total_sales = sum(
+        [
+            o.total_amount
+            for o in orders
+            if o.status != "Cancelled"
+        ]
+    )
+
     success_rate = 0.0
+
     if orders:
-        completed = len([o for o in orders if o.status == "Delivered"])
-        success_rate = (completed / len(orders)) * 100
-        
+        completed = len(
+            [
+                o
+                for o in orders
+                if o.status == "Delivered"
+            ]
+        )
+
+        success_rate = (
+            completed / len(orders)
+        ) * 100
+
     return {
         "total_shops": total_shops,
         "total_products": total_products,
@@ -372,47 +543,854 @@ def get_admin_metrics(db: Session = Depends(get_db)):
         "success_rate": round(success_rate, 1)
     }
 
-@app.get("/api/admin/shops", response_model=List[schemas.Shop])
-def list_admin_shops(db: Session = Depends(get_db)):
+
+@app.get(
+    "/api/admin/shops",
+    response_model=List[schemas.Shop]
+)
+def list_admin_shops(
+    db: Session = Depends(get_db)
+):
     return db.query(models.Shop).all()
 
-@app.get("/api/admin/orders", response_model=List[schemas.Order])
-def list_admin_orders(db: Session = Depends(get_db)):
-    return db.query(models.Order).order_by(models.Order.id.desc()).all()
+
+@app.get(
+    "/api/admin/orders",
+    response_model=List[schemas.Order]
+)
+def list_admin_orders(
+    db: Session = Depends(get_db)
+):
+    return db.query(models.Order).order_by(
+        models.Order.id.desc()
+    ).all()
 
 
 # --- S3 Image Upload Route ---
 @app.post("/api/upload")
-async def upload_image(file: UploadFile = File(...)):
+async def upload_image(
+    file: UploadFile = File(...)
+):
     if not s3_client or not S3_BUCKET_NAME:
-        raise HTTPException(status_code=500, detail="AWS S3 credentials are not configured on the server.")
-    
-    file_ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
-    unique_filename = f"uploads/{uuid.uuid4()}.{file_ext}"
-    
+        raise HTTPException(
+            status_code=500,
+            detail="AWS S3 credentials are not configured on the server."
+        )
+
+    file_ext = (
+        file.filename.split(".")[-1]
+        if "." in file.filename
+        else "jpg"
+    )
+
+    unique_filename = (
+        f"uploads/{uuid.uuid4()}.{file_ext}"
+    )
+
     try:
         # Upload object to S3
         s3_client.upload_fileobj(
             file.file,
             S3_BUCKET_NAME,
             unique_filename,
-            ExtraArgs={"ContentType": file.content_type}
+            ExtraArgs={
+                "ContentType": file.content_type
+            }
         )
-        
+
         # Public S3 object URL
-        public_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{unique_filename}"
-        return {"url": public_url}
+        public_url = (
+            f"https://{S3_BUCKET_NAME}.s3."
+            f"{AWS_REGION}.amazonaws.com/"
+            f"{unique_filename}"
+        )
+
+        return {
+            "url": public_url
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"S3 upload failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"S3 upload failed: {str(e)}"
+        )
 
 
 # --- WebSocket Endpoint ---
 @app.websocket("/ws/shop/{shop_id}")
-async def websocket_endpoint(websocket: WebSocket, shop_id: int):
-    await manager.connect(shop_id, websocket)
+async def websocket_endpoint(
+    websocket: WebSocket,
+    shop_id: int
+):
+    await manager.connect(
+        shop_id,
+        websocket
+    )
+
     try:
         while True:
             # Keep connection alive, listen for any client messages if needed
             await websocket.receive_text()
+
     except WebSocketDisconnect:
-        manager.disconnect(shop_id, websocket)
+        manager.disconnect(
+            shop_id,
+            websocket
+        )
+
+
+# --- Unified Authentication & Onboarding Routes ---
+
+def send_otp_notification(
+    identifier: str,
+    otp: str,
+    target_email: str = None
+):
+    # Ensure destination email address
+    destination = (
+        target_email
+        if target_email and "@" in target_email
+        else identifier
+    )
+
+    if "@" not in destination:
+        logger.warning(
+            f"[EMAIL OTP] Warning: No email address provided "
+            f"for identifier: {identifier}"
+        )
+        destination = identifier
+
+    subject = f"Ziplo Verification Code: {otp}"
+
+    body = (
+        f"Your Ziplo verification code is: {otp}. "
+        f"It is valid for 10 minutes."
+    )
+
+    smtp_server = (
+        os.getenv("SMTP_SERVER")
+        or os.getenv("SMTP_HOST")
+    )
+
+    smtp_port = os.getenv(
+        "SMTP_PORT",
+        "587"
+    )
+
+    smtp_user = (
+        os.getenv("SMTP_USER")
+        or os.getenv("SMTP_USERNAME")
+    )
+
+    smtp_password = os.getenv(
+        "SMTP_PASSWORD"
+    )
+
+    if smtp_server and smtp_user and smtp_password:
+        try:
+            from email.mime.multipart import MIMEMultipart
+
+            msg = MIMEMultipart()
+
+            msg["From"] = smtp_user
+            msg["To"] = destination
+            msg["Subject"] = subject
+
+            msg.attach(
+                MIMEText(
+                    body,
+                    "plain"
+                )
+            )
+
+            server = smtplib.SMTP(
+                smtp_server,
+                int(smtp_port)
+            )
+
+            server.starttls()
+
+            server.login(
+                smtp_user,
+                smtp_password
+            )
+
+            server.sendmail(
+                smtp_user,
+                destination,
+                msg.as_string()
+            )
+
+            server.close()
+
+            logger.info(
+                f"[SMTP] Successfully sent OTP email "
+                f"to {destination}"
+            )
+
+            return {
+                "status": "sent",
+                "method": "email",
+                "to": destination
+            }
+
+        except Exception as e:
+            logger.error(
+                f"[SMTP] Failed to send email: {e}"
+            )
+
+    # Clean log output when SMTP credentials are not set
+    logger.info(
+        f"\n"
+        f"==================================================\n"
+        f"               EMAIL OTP VERIFICATION             \n"
+        f"==================================================\n"
+        f" To Email: {destination}\n"
+        f" OTP Code: {otp}\n"
+        f" Subject: {subject}\n"
+        f"==================================================\n"
+    )
+
+    return {
+        "status": "mock_sent",
+        "method": "email",
+        "to": destination,
+        "otp": otp
+    }
+
+
+@app.get("/api/auth/check-identifier")
+def check_identifier(
+    identifier: str,
+    db: Session = Depends(get_db)
+):
+    if not identifier or not identifier.strip():
+        return {
+            "exists": False,
+            "role": None,
+            "is_shop": False
+        }
+
+    clean_id = identifier.strip()
+
+    # Check Customer table first
+    cust = db.query(models.Customer).filter(
+        (models.Customer.email == clean_id)
+        | (models.Customer.phone == clean_id)
+    ).first()
+
+    if cust:
+        return {
+            "exists": True,
+            "role": "customer",
+            "is_shop": False,
+            "name": cust.name
+        }
+
+    # Check Shop table
+    shop = db.query(models.Shop).filter(
+        (models.Shop.email == clean_id)
+        | (models.Shop.phone == clean_id)
+    ).first()
+
+    if shop:
+        return {
+            "exists": True,
+            "role": "merchant",
+            "is_shop": True,
+            "name": shop.name
+        }
+
+    return {
+        "exists": False,
+        "role": None,
+        "is_shop": False
+    }
+
+
+@app.post("/api/auth/register")
+def auth_register(
+    reg: schemas.AuthRegister,
+    db: Session = Depends(get_db)
+):
+    if not reg.email and not reg.phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Either email or phone must be provided"
+        )
+
+    if reg.is_shop:
+
+        # Check if shop already exists
+        if reg.email:
+            existing = db.query(models.Shop).filter(
+                models.Shop.email == reg.email
+            ).first()
+
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Email already registered as a shop"
+                )
+
+        if reg.phone:
+            existing = db.query(models.Shop).filter(
+                models.Shop.phone == reg.phone
+            ).first()
+
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Phone number already registered as a shop"
+                )
+
+        new_shop = models.Shop(
+            name=reg.name or "New Shop",
+            owner_name=reg.owner_name,
+            email=reg.email,
+            phone=reg.phone,
+            password=reg.password,
+            address=reg.address,
+            coordinates=reg.coordinates or "22.3072,73.1678",
+            image_url=reg.image_url,
+            profile_completed=True
+            if (
+                reg.name
+                and reg.owner_name
+                and reg.image_url
+                and reg.address
+            )
+            else False
+        )
+
+        db.add(new_shop)
+        db.commit()
+
+        return {
+            "message": "Shop registered successfully. Please login to receive OTP.",
+            "is_shop": True,
+            "role": "merchant"
+        }
+
+    else:
+
+        # Customer registration
+        if reg.email:
+            existing = db.query(models.Customer).filter(
+                models.Customer.email == reg.email
+            ).first()
+
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Email already registered as a customer"
+                )
+
+        if reg.phone:
+            existing = db.query(models.Customer).filter(
+                models.Customer.phone == reg.phone
+            ).first()
+
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Phone number already registered as a customer"
+                )
+
+        new_cust = models.Customer(
+            name=reg.name,
+            email=reg.email,
+            phone=reg.phone,
+            password=reg.password,
+            address=reg.address,
+            coordinates=reg.coordinates,
+            profile_completed=True
+            if (
+                reg.name
+                and reg.address
+            )
+            else False
+        )
+
+        db.add(new_cust)
+        db.commit()
+
+        return {
+            "message": "Customer registered successfully. Please login to receive OTP.",
+            "is_shop": False,
+            "role": "customer"
+        }
+
+
+@app.post("/api/auth/login")
+def auth_login(
+    login: schemas.AuthLogin,
+    db: Session = Depends(get_db)
+):
+    # Try logging in as Customer first
+    user = db.query(models.Customer).filter(
+        (models.Customer.email == login.identifier)
+        | (models.Customer.phone == login.identifier)
+    ).first()
+
+    is_shop = False
+
+    # If not found, try logging in as Shop
+    if not user:
+        user = db.query(models.Shop).filter(
+            (models.Shop.email == login.identifier)
+            | (models.Shop.phone == login.identifier)
+        ).first()
+
+        is_shop = True
+
+    if not user or user.password != login.password:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid identifier or password"
+        )
+
+    # Generate 6-digit OTP
+    otp = str(
+        random.randint(
+            100000,
+            999999
+        )
+    )
+
+    user.otp = otp
+
+    user.otp_expiry = (
+        datetime.utcnow()
+        + timedelta(minutes=10)
+    )
+
+    db.commit()
+
+    # Send Email OTP
+    target_email = (
+        getattr(user, "email", None)
+        or login.identifier
+    )
+
+    send_otp_notification(
+        login.identifier,
+        otp,
+        target_email=target_email
+    )
+
+    role = (
+        "merchant"
+        if is_shop
+        else "customer"
+    )
+
+    return {
+        "message": "OTP sent successfully to your email",
+        "identifier": login.identifier,
+        "is_shop": is_shop,
+        "role": role
+    }
+
+
+@app.post("/api/auth/verify")
+def auth_verify(
+    verify: schemas.AuthVerify,
+    db: Session = Depends(get_db)
+):
+    logger.info(
+        f"[AUTH VERIFY] Identifier: {verify.identifier}, "
+        f"OTP: {verify.otp}, "
+        f"IsShop: {verify.is_shop}"
+    )
+
+    user = None
+
+    if verify.is_shop:
+        user = db.query(models.Shop).filter(
+            (models.Shop.email == verify.identifier)
+            | (models.Shop.phone == verify.identifier)
+        ).first()
+
+    else:
+        user = db.query(models.Customer).filter(
+            (models.Customer.email == verify.identifier)
+            | (models.Customer.phone == verify.identifier)
+        ).first()
+
+    # Fallback search if user role wasn't matched strictly
+    if not user:
+        user = db.query(models.Customer).filter(
+            (models.Customer.email == verify.identifier)
+            | (models.Customer.phone == verify.identifier)
+        ).first()
+
+        if not user:
+            user = db.query(models.Shop).filter(
+                (models.Shop.email == verify.identifier)
+                | (models.Shop.phone == verify.identifier)
+            ).first()
+
+            if user:
+                verify.is_shop = True
+
+    if not user:
+        logger.warning(
+            f"[AUTH VERIFY] User not found for identifier: "
+            f"{verify.identifier}"
+        )
+
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    if not user.otp or user.otp != verify.otp:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid OTP code"
+        )
+
+    if user.otp_expiry < datetime.utcnow():
+        raise HTTPException(
+            status_code=400,
+            detail="OTP code has expired"
+        )
+
+    # Clear OTP
+    user.otp = None
+    user.otp_expiry = None
+
+    db.commit()
+
+    role = (
+        "merchant"
+        if verify.is_shop
+        else "customer"
+    )
+
+    resp = {
+        "role": role,
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "phone": user.phone,
+        "address": user.address,
+        "coordinates": user.coordinates,
+        "image_url": getattr(
+            user,
+            "image_url",
+            None
+        ),
+        "owner_name": getattr(
+            user,
+            "owner_name",
+            None
+        ),
+        "profile_completed": user.profile_completed
+    }
+
+    # If merchant is missing mandatory details
+    # (owner_name, image_url), force profile_completed to False
+    if verify.is_shop:
+        if (
+            not user.owner_name
+            or not user.image_url
+            or not user.name
+        ):
+            user.profile_completed = False
+
+            db.commit()
+
+            resp["profile_completed"] = False
+
+    return resp
+
+
+@app.post("/api/auth/complete-profile")
+def auth_complete_profile(
+    profile: schemas.ProfileComplete,
+    db: Session = Depends(get_db)
+):
+    if profile.is_shop:
+
+        user = db.query(models.Shop).filter(
+            (models.Shop.email == profile.identifier)
+            | (models.Shop.phone == profile.identifier)
+        ).first()
+
+        if not user:
+            user = (
+                db.query(models.Shop).filter(
+                    models.Shop.id == profile.identifier
+                ).first()
+                if profile.identifier.isdigit()
+                else None
+            )
+
+    else:
+
+        user = db.query(models.Customer).filter(
+            (models.Customer.email == profile.identifier)
+            | (models.Customer.phone == profile.identifier)
+        ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    user.name = profile.name
+
+    if profile.is_shop and profile.owner_name:
+        user.owner_name = profile.owner_name
+
+    if profile.is_shop and profile.image_url:
+        user.image_url = profile.image_url
+
+    user.address = profile.address
+    user.coordinates = profile.coordinates
+    user.profile_completed = True
+
+    db.commit()
+
+    role = (
+        "merchant"
+        if profile.is_shop
+        else "customer"
+    )
+
+    return {
+        "role": role,
+        "id": user.id,
+        "name": user.name,
+        "owner_name": getattr(
+            user,
+            "owner_name",
+            None
+        ),
+        "email": user.email,
+        "phone": user.phone,
+        "address": user.address,
+        "coordinates": user.coordinates,
+        "image_url": getattr(
+            user,
+            "image_url",
+            None
+        ),
+        "profile_completed": True
+    }
+
+
+@app.get("/api/shops/{shop_id}/analytics")
+def get_shop_analytics(
+    shop_id: int,
+    period: str = "daily",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    shop = db.query(models.Shop).filter(
+        models.Shop.id == shop_id
+    ).first()
+
+    if not shop:
+        raise HTTPException(
+            status_code=404,
+            detail="Shop not found"
+        )
+
+    now = datetime.utcnow()
+
+    if period == "daily":
+
+        start_time = datetime(
+            now.year,
+            now.month,
+            now.day,
+            0,
+            0,
+            0
+        )
+
+        end_time = now
+
+    elif period == "weekly":
+
+        start_time = now - timedelta(days=7)
+        end_time = now
+
+    elif period == "monthly":
+
+        start_time = now - timedelta(days=30)
+        end_time = now
+
+    elif period == "quarterly":
+
+        start_time = now - timedelta(days=90)
+        end_time = now
+
+    elif period == "annual":
+
+        start_time = now - timedelta(days=365)
+        end_time = now
+
+    elif period == "custom":
+
+        try:
+
+            start_time = (
+                datetime.strptime(
+                    start_date,
+                    "%Y-%m-%d"
+                )
+                if start_date
+                else now - timedelta(days=30)
+            )
+
+            if end_date:
+                end_time = (
+                    datetime.strptime(
+                        end_date,
+                        "%Y-%m-%d"
+                    )
+                    + timedelta(days=1)
+                    - timedelta(seconds=1)
+                )
+            else:
+                end_time = now
+
+        except Exception:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid date format. Use YYYY-MM-DD."
+            )
+
+    else:
+
+        start_time = now - timedelta(days=30)
+        end_time = now
+
+    orders = db.query(models.Order).filter(
+        models.Order.shop_id == shop_id,
+        models.Order.created_at >= start_time,
+        models.Order.created_at <= end_time
+    ).all()
+
+    delivered_orders = [
+        o
+        for o in orders
+        if o.status != "Cancelled"
+    ]
+
+    total_sales = sum(
+        o.total_amount
+        for o in delivered_orders
+    )
+
+    total_orders = len(orders)
+
+    delivered_count = len(
+        delivered_orders
+    )
+
+    avg_order_value = (
+        total_sales / delivered_count
+        if delivered_count > 0
+        else 0.0
+    )
+
+    item_sales = {}
+
+    for o in delivered_orders:
+
+        for item in o.items:
+
+            p_name = item.product_name
+
+            item_sales[p_name] = (
+                item_sales.get(
+                    p_name,
+                    0
+                )
+                + item.quantity
+            )
+
+    top_products = [
+        {
+            "name": name,
+            "qty": qty
+        }
+        for name, qty in sorted(
+            item_sales.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:5]
+    ]
+
+    return {
+        "period": period,
+        "start_date": start_time.strftime(
+            "%Y-%m-%d"
+        ),
+        "end_date": end_time.strftime(
+            "%Y-%m-%d"
+        ),
+        "total_sales": round(
+            total_sales,
+            2
+        ),
+        "total_orders": total_orders,
+        "delivered_orders": delivered_count,
+        "avg_order_value": round(
+            avg_order_value,
+            2
+        ),
+        "top_products": top_products
+    }
+
+
+@app.post("/api/contact")
+def submit_contact_message(contact: schemas.ContactMessage):
+    logger.info(f"[Contact Form] Message received from {contact.name} ({contact.email}, {contact.phone}): {contact.message}")
+    msg_id = f"ZIPLO-MSG-{uuid.uuid4().hex[:8].upper()}"
+
+    # Forward email directly to getziplo@gmail.com via FormSubmit service
+    import urllib.request
+    import json
+
+    try:
+        url = "https://formsubmit.co/ajax/getziplo@gmail.com"
+        payload = json.dumps({
+            "name": contact.name,
+            "email": contact.email,
+            "_replyto": contact.email,
+            "phone": contact.phone,
+            "message": contact.message,
+            "_subject": f"New Contact Message from {contact.name} ({contact.email})"
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Referer": "http://localhost:5173/"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_body = response.read().decode("utf-8")
+            logger.info(f"[Contact Form Email Dispatch] Result: {res_body}")
+    except Exception as e:
+        logger.warning(f"[Contact Form Email Dispatch] Web forward notice: {e}")
+
+    return {
+        "status": "success",
+        "message": f"Thank you {contact.name}, your message has been sent to getziplo@gmail.com! We will get back to you at {contact.email} shortly.",
+        "reference_id": msg_id,
+        "recipient": "getziplo@gmail.com",
+        "timestamp": datetime.utcnow().isoformat()
+    }

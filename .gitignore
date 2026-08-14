@@ -120,3 +120,14 @@ venv.bak/
 # Database files
 gokirana.db
 ~$*
+*.db
+
+# Explicit environment and dependencies
+backend/.env
+frontend/node_modules/
+backend/venv/
+backend/__pycache__/
+
+# Ignore all markdown documentation generated during development
+*.md
+!README.md

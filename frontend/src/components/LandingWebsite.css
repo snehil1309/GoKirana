@@ -1,0 +1,314 @@
+/* Ziplo Bootstrap 5 Custom Palette & Styling Overrides */
+:root {
+  --ziplo-emerald: #10b981;
+  --ziplo-emerald-hover: #059669;
+  --ziplo-teal: #14b8a6;
+  --ziplo-dark-bg: #020617;
+  --ziplo-card-bg: #0f172a;
+  --ziplo-border: #1e293b;
+  --ziplo-text-muted: #94a3b8;
+}
+
+body {
+  background-color: var(--ziplo-dark-bg) !important;
+  color: #f8fafc !important;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Custom Ziplo Brand Navbar */
+.ziplo-navbar {
+  background-color: rgba(15, 23, 42, 0.95) !important;
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--ziplo-border);
+}
+
+.ziplo-logo-icon {
+  width: 42px;
+  height: 42px;
+  background: linear-gradient(135deg, #10b981 0%, #14b8a6 100%);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 22px;
+  color: #020617;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+}
+
+.ziplo-brand-text {
+  font-weight: 900;
+  font-size: 24px;
+  background: linear-gradient(90deg, #ffffff 0%, #34d399 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.5px;
+}
+
+.ziplo-search-box {
+  background-color: #020617 !important;
+  border: 1px solid var(--ziplo-border) !important;
+  color: #ffffff !important;
+  border-radius: 14px !important;
+  padding-left: 45px !important;
+  height: 48px;
+}
+
+.ziplo-search-box:focus {
+  border-color: var(--ziplo-emerald) !important;
+  box-shadow: 0 0 0 0.25rem rgba(16, 185, 129, 0.2) !important;
+}
+
+.ziplo-search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ziplo-text-muted);
+  font-size: 18px;
+  z-index: 5;
+}
+
+/* Location Selector Box */
+.ziplo-location-btn {
+  background-color: #0f172a;
+  border: 1px solid var(--ziplo-border);
+  color: #ffffff;
+  border-radius: 14px;
+  padding: 8px 14px;
+  transition: all 0.2s ease;
+}
+
+.ziplo-location-btn:hover {
+  border-color: var(--ziplo-emerald);
+}
+
+/* Green Cart Button */
+.ziplo-cart-btn {
+  background: linear-gradient(135deg, #10b981 0%, #14b8a6 100%);
+  color: #020617 !important;
+  border: none;
+  border-radius: 14px;
+  font-weight: 800;
+  padding: 10px 18px;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ziplo-cart-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.4);
+  color: #020617 !important;
+}
+
+/* Hero & Feature Cards */
+.ziplo-hero-card {
+  background: linear-gradient(135deg, #022c22 0%, #0f172a 60%, #0d9488 100%);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 24px;
+  padding: 40px;
+}
+
+.ziplo-card {
+  background-color: var(--ziplo-card-bg);
+  border: 1px solid var(--ziplo-border);
+  border-radius: 20px;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.ziplo-card:hover {
+  border-color: rgba(16, 185, 129, 0.5);
+  transform: translateY(-3px);
+}
+
+/* Category Grid Tiles */
+.ziplo-cat-tile {
+  background-color: var(--ziplo-card-bg);
+  border: 1px solid var(--ziplo-border);
+  border-radius: 18px;
+  padding: 20px 12px;
+  text-align: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.ziplo-cat-tile:hover {
+  border-color: var(--ziplo-emerald);
+  transform: translateY(-4px);
+  background-color: #1e293b;
+}
+
+.ziplo-cat-icon {
+  width: 56px;
+  height: 56px;
+  background-color: #020617;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px auto;
+  font-size: 26px;
+}
+
+/* Product Cards */
+.ziplo-prod-card {
+  background-color: var(--ziplo-card-bg);
+  border: 1px solid var(--ziplo-border);
+  border-radius: 18px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  transition: all 0.2s ease;
+}
+
+.ziplo-prod-card:hover {
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
+.ziplo-add-btn {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--ziplo-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 12px;
+  padding: 6px 14px;
+  transition: all 0.2s ease;
+}
+
+.ziplo-add-btn:hover {
+  background-color: var(--ziplo-emerald);
+  color: #020617;
+}
+
+/* Modal Dark Styling */
+.ziplo-modal-content {
+  background-color: #0f172a !important;
+  border: 1px solid var(--ziplo-border) !important;
+  border-radius: 24px !important;
+  color: #ffffff !important;
+}
+
+/* Accordion Dark Styling */
+.accordion-item {
+  background-color: #0f172a !important;
+  border: 1px solid #1e293b !important;
+  color: #ffffff !important;
+  border-radius: 14px !important;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.accordion-button {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  box-shadow: none !important;
+}
+
+.accordion-button:not(.collapsed) {
+  color: var(--ziplo-emerald) !important;
+  background-color: #1e293b !important;
+}
+
+.accordion-button::after {
+  filter: invert(1);
+}
+
+.accordion-body {
+  color: #94a3b8;
+  border-top: 1px solid #1e293b;
+}
+
+/* Mobile First Responsive Overrides & Mobile Bottom Nav Bar */
+html, body {
+  overflow-x: hidden !important;
+  width: 100% !important;
+}
+
+.ziplo-mobile-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background-color: rgba(15, 23, 42, 0.98);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid #1e293b;
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 4px 8px;
+}
+
+.ziplo-mobile-nav-item {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 2px;
+  padding: 6px 4px;
+  width: 20%;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+
+.ziplo-mobile-nav-item.active {
+  color: #10b981;
+}
+
+.ziplo-mobile-nav-item i {
+  font-size: 18px;
+}
+
+@media (max-width: 576px) {
+  .ziplo-hero-card {
+    padding: 24px 18px !important;
+    border-radius: 18px !important;
+  }
+
+  .ziplo-logo-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+  }
+
+  .ziplo-brand-text {
+    font-size: 20px;
+  }
+
+  .ziplo-cat-tile {
+    padding: 12px 6px !important;
+    border-radius: 14px !important;
+  }
+
+  .ziplo-cat-icon {
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 20px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .ziplo-prod-card {
+    padding: 12px !important;
+    border-radius: 14px !important;
+  }
+
+  /* Prevent bottom content from being cut off by sticky bottom nav */
+  .ziplo-website {
+    padding-bottom: 70px !important;
+  }
+}
+

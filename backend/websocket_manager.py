@@ -19,8 +19,6 @@ class ConnectionManager:
             if not self.active_connections[shop_id]:
                 del self.active_connections[shop_id]
 
-    async def send_personal_message(self, message: dict, websocket: WebSocket):
-        await websocket.send_json(message)
 
     async def notify_shop(self, shop_id: int, message: dict):
         if shop_id in self.active_connections:
